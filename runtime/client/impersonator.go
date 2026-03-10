@@ -79,6 +79,8 @@ func (i *Impersonator) GetClient(ctx context.Context) (rc.Client, *polling.Statu
 }
 
 // CanImpersonate checks if the given Kubernetes account can be impersonated.
+// When a kubeConfigRef is configured, the ServiceAccount is checked on the
+// remote cluster (pointed to by the kubeConfig) instead of the local cluster.
 func (i *Impersonator) CanImpersonate(ctx context.Context) bool {
 	name := i.defaultServiceAccount
 	if sa := i.serviceAccountName; sa != "" {
@@ -86,6 +88,18 @@ func (i *Impersonator) CanImpersonate(ctx context.Context) bool {
 	}
 	if name == "" {
 		return true
+	}
+
+	// Determine which client to use for the ServiceAccount lookup.
+	// When a kubeConfigRef is set, the ServiceAccount is expected to exist
+	// on the remote cluster, not the local one.
+	lookupClient := i.client
+	if i.kubeConfigRef != nil {
+		remoteClient, _, err := i.clientForKubeConfig(ctx)
+		if err != nil {
+			return false
+		}
+		lookupClient = remoteClient
 	}
 
 	sa := &corev1.ServiceAccount{
@@ -98,7 +112,7 @@ func (i *Impersonator) CanImpersonate(ctx context.Context) bool {
 			Namespace: i.serviceAccountNamespace,
 		},
 	}
-	if err := i.client.Get(ctx, rc.ObjectKeyFromObject(sa), sa); err != nil {
+	if err := lookupClient.Get(ctx, rc.ObjectKeyFromObject(sa), sa); err != nil {
 		return false
 	}
 
